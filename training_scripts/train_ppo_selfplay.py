@@ -2,6 +2,7 @@
 
 # Simple self-play PPO trainer
 
+import argparse
 import os
 import gym
 import slimevolleygym
@@ -28,10 +29,11 @@ LOGDIR = "ppo1_selfplay"
 class SlimeVolleySelfPlayEnv(slimevolleygym.SlimeVolleyEnv):
   # wrapper over the normal single player env, but loads the best self play model
   def __init__(self):
-    super(SlimeVolleySelfPlayEnv, self).__init__()
+    super(SlimeVolleySelfPlayEnv, self).__init__(opponent_mode)
     self.policy = self
     self.best_model = None
     self.best_model_filename = None
+    self.opponent_mode = opponent_mode
   def predict(self, obs): # the policy
     if self.best_model is None:
       return self.action_space.sample() # return a random action
@@ -43,7 +45,10 @@ class SlimeVolleySelfPlayEnv(slimevolleygym.SlimeVolleyEnv):
     modellist = [f for f in os.listdir(LOGDIR) if f.startswith("history")]
     modellist.sort()
     if len(modellist) > 0:
-      filename = os.path.join(LOGDIR, modellist[-1]) # the latest best model
+      if self.opponent_mode == 'latest':
+        filename = os.path.join(LOGDIR, modellist[-1]) # the latest best model
+      elif self.opponent_mode == 'random':
+        filename = os.path.join(LOGDIR, modellist[np.random.choice(len(modellist), 1)[0]]) # randomly select previously saved models
       if filename != self.best_model_filename:
         print("loading model: ", filename)
         self.best_model_filename = filename
@@ -91,10 +96,19 @@ def rollout(env, policy):
   return total_reward
 
 def train():
+
+  parser = argparse.ArgumentParser(description='')
+  parser.add_argument('opponent_mode', type=str)
+  parser.add_argument('log_dir', type=str)
+  args = parser.parse_args()
+
+  LOGDIR = args.log_dir
+  opponent_mode = args.opponent_mode
+
   # train selfplay agent
   logger.configure(folder=LOGDIR)
 
-  env = SlimeVolleySelfPlayEnv()
+  env = SlimeVolleySelfPlayEnv(opponent_mode)
   env.seed(SEED)
 
   # take mujoco hyperparams (but doubled timesteps_per_actorbatch to cover more steps.)
