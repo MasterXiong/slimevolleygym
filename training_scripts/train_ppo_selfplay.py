@@ -24,16 +24,16 @@ BEST_THRESHOLD = 0.5 # must achieve a mean score above this to replace prev best
 
 RENDER_MODE = False # set this to false if you plan on running for full 1000 trials.
 
-LOGDIR = "ppo1_selfplay"
 
 class SlimeVolleySelfPlayEnv(slimevolleygym.SlimeVolleyEnv):
   # wrapper over the normal single player env, but loads the best self play model
-  def __init__(self):
-    super(SlimeVolleySelfPlayEnv, self).__init__(opponent_mode)
+  def __init__(self, args):
+    super(SlimeVolleySelfPlayEnv, self).__init__()
     self.policy = self
     self.best_model = None
     self.best_model_filename = None
-    self.opponent_mode = opponent_mode
+    self.opponent_mode = args.opponent_mode
+    self.log_dir = args.log_dir
   def predict(self, obs): # the policy
     if self.best_model is None:
       return self.action_space.sample() # return a random action
@@ -42,13 +42,13 @@ class SlimeVolleySelfPlayEnv(slimevolleygym.SlimeVolleyEnv):
       return action
   def reset(self):
     # load model if it's there
-    modellist = [f for f in os.listdir(LOGDIR) if f.startswith("history")]
+    modellist = [f for f in os.listdir(self.log_dir) if f.startswith("history")]
     modellist.sort()
     if len(modellist) > 0:
       if self.opponent_mode == 'latest':
-        filename = os.path.join(LOGDIR, modellist[-1]) # the latest best model
+        filename = os.path.join(self.log_dir, modellist[-1]) # the latest best model
       elif self.opponent_mode == 'random':
-        filename = os.path.join(LOGDIR, modellist[np.random.choice(len(modellist), 1)[0]]) # randomly select previously saved models
+        filename = os.path.join(self.log_dir, modellist[np.random.choice(len(modellist), 1)[0]]) # randomly select previously saved models
       if filename != self.best_model_filename:
         print("loading model: ", filename)
         self.best_model_filename = filename
@@ -64,14 +64,15 @@ class SelfPlayCallback(EvalCallback):
     super(SelfPlayCallback, self).__init__(*args, **kwargs)
     self.best_mean_reward = BEST_THRESHOLD
     self.generation = 0
+    self.log_dir = kwargs['log_path']
   def _on_step(self) -> bool:
     result = super(SelfPlayCallback, self)._on_step()
     if result and self.best_mean_reward > BEST_THRESHOLD:
       self.generation += 1
       print("SELFPLAY: mean_reward achieved:", self.best_mean_reward)
       print("SELFPLAY: new best model, bumping up generation to", self.generation)
-      source_file = os.path.join(LOGDIR, "best_model.zip")
-      backup_file = os.path.join(LOGDIR, "history_"+str(self.generation).zfill(8)+".zip")
+      source_file = os.path.join(self.log_dir, "best_model.zip")
+      backup_file = os.path.join(self.log_dir, "history_"+str(self.generation).zfill(8)+".zip")
       copyfile(source_file, backup_file)
       self.best_mean_reward = BEST_THRESHOLD
     return result
@@ -98,17 +99,14 @@ def rollout(env, policy):
 def train():
 
   parser = argparse.ArgumentParser(description='')
-  parser.add_argument('opponent_mode', type=str)
-  parser.add_argument('log_dir', type=str)
+  parser.add_argument('--opponent_mode', type=str)
+  parser.add_argument('--log_dir', type=str)
   args = parser.parse_args()
 
-  LOGDIR = args.log_dir
-  opponent_mode = args.opponent_mode
-
   # train selfplay agent
-  logger.configure(folder=LOGDIR)
+  logger.configure(folder=args.log_dir)
 
-  env = SlimeVolleySelfPlayEnv(opponent_mode)
+  env = SlimeVolleySelfPlayEnv(args)
   env.seed(SEED)
 
   # take mujoco hyperparams (but doubled timesteps_per_actorbatch to cover more steps.)
@@ -116,15 +114,15 @@ def train():
                    optim_stepsize=3e-4, optim_batchsize=64, gamma=0.99, lam=0.95, schedule='linear', verbose=2)
 
   eval_callback = SelfPlayCallback(env,
-    best_model_save_path=LOGDIR,
-    log_path=LOGDIR,
+    best_model_save_path=args.log_dir,
+    log_path=args.log_dir,
     eval_freq=EVAL_FREQ,
     n_eval_episodes=EVAL_EPISODES,
     deterministic=False)
 
   model.learn(total_timesteps=NUM_TIMESTEPS, callback=eval_callback)
 
-  model.save(os.path.join(LOGDIR, "final_model")) # probably never get to this point.
+  model.save(os.path.join(self.log_dir, "final_model")) # probably never get to this point.
 
   env.close()
 
