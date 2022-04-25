@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-# Simple self-play PPO trainer
+# trains slime agent in selfplay from states with multiworker via MPI (fast wallclock time)
+# run with
+# mpirun -np 96 python train_ppo_mpi.py (replace 96 with number of CPU cores you have.)
 
 import argparse
 import os
@@ -8,9 +10,10 @@ import gym
 import slimevolleygym
 import numpy as np
 
-from stable_baselines.ppo1 import PPO1
+from mpi4py import MPI
+from stable_baselines.common import set_global_seeds
+from stable_baselines import bench, logger, PPO1
 from stable_baselines.common.policies import MlpPolicy
-from stable_baselines import logger
 from stable_baselines.common.callbacks import EvalCallback
 
 from shutil import copyfile # keep track of generations
@@ -48,8 +51,6 @@ class SlimeVolleySelfPlayEnv(slimevolleygym.SlimeVolleyEnv):
       if self.opponent_mode == 'latest':
         filename = os.path.join(self.log_dir, modellist[-1]) # the latest best model
       elif self.opponent_mode == 'random':
-        # Bug to fix: this may change the opponent at every episode
-        # and the evaluation process is not run against the same opponent as the one for training
         filename = os.path.join(self.log_dir, modellist[np.random.choice(len(modellist), 1)[0]]) # randomly select previously saved models
       if filename != self.best_model_filename:
         print("loading model: ", filename)
@@ -105,11 +106,21 @@ def train():
   parser.add_argument('--log_dir', type=str)
   args = parser.parse_args()
 
-  # train selfplay agent
-  logger.configure(folder=args.log_dir)
+  rank = MPI.COMM_WORLD.Get_rank()
 
+  if rank == 0:
+    logger.configure(folder=LOGDIR)
+
+  else:
+    logger.configure(format_strs=[])
+
+  workerseed = SEED + 10000 * MPI.COMM_WORLD.Get_rank()
+  set_global_seeds(workerseed)
   env = SlimeVolleySelfPlayEnv(args)
   env.seed(SEED)
+
+  env = bench.Monitor(env, logger.get_dir() and os.path.join(logger.get_dir(), str(rank)))
+  env.seed(workerseed)
 
   # take mujoco hyperparams (but doubled timesteps_per_actorbatch to cover more steps.)
   model = PPO1(MlpPolicy, env, timesteps_per_actorbatch=4096, clip_param=0.2, entcoeff=0.0, optim_epochs=10,
