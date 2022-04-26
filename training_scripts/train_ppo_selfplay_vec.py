@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
-# trains slime agent in selfplay from states with multiworker via MPI (fast wallclock time)
-# run with
-# mpirun -np 32 python train_ppo_mpi.py --opponent_mode latest --log_dir opponent_latest_mpi_32
+# Simple self-play PPO trainer
+'''
+python training_scripts/train_ppo_selfplay_vec.py --opponent_mode latest --num_env 16 --log_dir opponent_latest_vec_16
+'''
 
 import argparse
 import os
@@ -10,19 +11,19 @@ import gym
 import slimevolleygym
 import numpy as np
 
-from mpi4py import MPI
-from stable_baselines.common import set_global_seeds
-from stable_baselines import bench, logger, PPO1
+from stable_baselines.ppo2 import PPO2
 from stable_baselines.common.policies import MlpPolicy
+from stable_baselines import logger
 from stable_baselines.common.callbacks import EvalCallback
+from stable_baselines.common.cmd_util import make_vec_env
 
 from shutil import copyfile # keep track of generations
 
 # Settings
 SEED = 17
 NUM_TIMESTEPS = int(1e9)
-EVAL_FREQ = int(1e5)
-EVAL_EPISODES = int(1e2)
+EVAL_FREQ = int(1e4)
+EVAL_EPISODES = int(10)
 BEST_THRESHOLD = 0.5 # must achieve a mean score above this to replace prev best self
 
 RENDER_MODE = False # set this to false if you plan on running for full 1000 trials.
@@ -51,13 +52,15 @@ class SlimeVolleySelfPlayEnv(slimevolleygym.SlimeVolleyEnv):
       if self.opponent_mode == 'latest':
         filename = os.path.join(self.log_dir, modellist[-1]) # the latest best model
       elif self.opponent_mode == 'random':
+        # Bug to fix: this may change the opponent at every episode
+        # and the evaluation process is not run against the same opponent as the one for training
         filename = os.path.join(self.log_dir, modellist[np.random.choice(len(modellist), 1)[0]]) # randomly select previously saved models
       if filename != self.best_model_filename:
         print("loading model: ", filename)
         self.best_model_filename = filename
         if self.best_model is not None:
           del self.best_model
-        self.best_model = PPO1.load(filename, env=self)
+        self.best_model = PPO2.load(filename)
     return super(SlimeVolleySelfPlayEnv, self).reset()
 
 class SelfPlayCallback(EvalCallback):
@@ -80,51 +83,25 @@ class SelfPlayCallback(EvalCallback):
       self.best_mean_reward = BEST_THRESHOLD
     return result
 
-def rollout(env, policy):
-  """ play one agent vs the other in modified gym-style loop. """
-  obs = env.reset()
-
-  done = False
-  total_reward = 0
-
-  while not done:
-
-    action, _states = policy.predict(obs)
-    obs, reward, done, _ = env.step(action)
-
-    total_reward += reward
-
-    if RENDER_MODE:
-      env.render()
-
-  return total_reward
 
 def train():
 
   parser = argparse.ArgumentParser(description='')
   parser.add_argument('--opponent_mode', type=str)
   parser.add_argument('--log_dir', type=str)
+  parser.add_argument('--num_env', type=int, default=32)
   args = parser.parse_args()
 
-  rank = MPI.COMM_WORLD.Get_rank()
+  # train selfplay agent
+  logger.configure(folder=args.log_dir)
 
-  if rank == 0:
-    logger.configure(folder=args.log_dir)
-
-  else:
-    logger.configure(format_strs=[])
-
-  workerseed = SEED + 10000 * MPI.COMM_WORLD.Get_rank()
-  set_global_seeds(workerseed)
   env = SlimeVolleySelfPlayEnv(args)
-  env.seed(SEED)
-
-  env = bench.Monitor(env, logger.get_dir() and os.path.join(logger.get_dir(), str(rank)))
-  env.seed(workerseed)
+  #env.seed(SEED)
+  vec_env = make_vec_env(SlimeVolleySelfPlayEnv, n_envs=args.num_env, seed=0, env_kwargs={'args': args})
 
   # take mujoco hyperparams (but doubled timesteps_per_actorbatch to cover more steps.)
-  model = PPO1(MlpPolicy, env, timesteps_per_actorbatch=4096, clip_param=0.2, entcoeff=0.0, optim_epochs=10,
-                   optim_stepsize=3e-4, optim_batchsize=64, gamma=0.99, lam=0.95, schedule='linear', verbose=2)
+  model = PPO2(MlpPolicy, vec_env, n_steps=4096, cliprange=0.2, ent_coef=0.0, noptepochs=10,
+                   learning_rate=3e-4, nminibatches=64, gamma=0.99, lam=0.95, verbose=2)
 
   eval_callback = SelfPlayCallback(env,
     best_model_save_path=args.log_dir,
