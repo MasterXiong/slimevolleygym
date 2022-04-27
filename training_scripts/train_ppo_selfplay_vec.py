@@ -2,7 +2,7 @@
 
 # Simple self-play PPO trainer
 '''
-python training_scripts/train_ppo_selfplay_vec.py --opponent_mode latest --num_env 16 --log_dir opponent_latest_vec_16
+python training_scripts/train_ppo_selfplay_vec.py --opponent_mode latest --num_env 8 --log_dir opponent_latest_vec_8
 '''
 
 import argparse
@@ -11,7 +11,8 @@ import gym
 import slimevolleygym
 import numpy as np
 
-from stable_baselines.ppo2 import PPO2
+from my_ppo import PPO2
+#from stable_baselines.ppo2 import PPO2
 from stable_baselines.common.policies import MlpPolicy
 from stable_baselines import logger
 from stable_baselines.common.callbacks import EvalCallback
@@ -45,6 +46,9 @@ class SlimeVolleySelfPlayEnv(slimevolleygym.SlimeVolleyEnv):
       action, _ = self.best_model.predict(obs)
       return action
   def reset(self):
+    # load model from 'opponent.zip' at the beginning of every update
+    self.best_model = PPO2.load(os.path.join(self.log_dir, 'opponent.zip'))
+    '''
     # load model if it's there
     modellist = [f for f in os.listdir(self.log_dir) if f.startswith("history")]
     modellist.sort()
@@ -61,6 +65,7 @@ class SlimeVolleySelfPlayEnv(slimevolleygym.SlimeVolleyEnv):
         if self.best_model is not None:
           del self.best_model
         self.best_model = PPO2.load(filename)
+    '''
     return super(SlimeVolleySelfPlayEnv, self).reset()
 
 class SelfPlayCallback(EvalCallback):
@@ -102,6 +107,8 @@ def train():
   # take mujoco hyperparams (but doubled timesteps_per_actorbatch to cover more steps.)
   model = PPO2(MlpPolicy, vec_env, n_steps=4096, cliprange=0.2, ent_coef=0.0, noptepochs=10,
                    learning_rate=3e-4, nminibatches=64, gamma=0.99, lam=0.95, verbose=2)
+  # save the randomly initialized policy so that we can load it as the initial opponent
+  model.save(os.path.join(args.log_dir, "opponent.zip"))
 
   eval_callback = SelfPlayCallback(env,
     best_model_save_path=args.log_dir,
@@ -112,7 +119,7 @@ def train():
 
   model.learn(total_timesteps=NUM_TIMESTEPS, callback=eval_callback)
 
-  model.save(os.path.join(self.log_dir, "final_model")) # probably never get to this point.
+  model.save(os.path.join(agrs.log_dir, "final_model")) # probably never get to this point.
 
   env.close()
 

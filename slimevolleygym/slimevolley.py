@@ -810,6 +810,7 @@ class SlimeVolleyEnv(gym.Env):
       'otherObs': otherObs,
       'state': self.game.agent_right.getObservation(),
       'otherState': self.game.agent_left.getObservation(),
+      'opponent_action': otherAction
     }
 
     if self.survival_bonus:
