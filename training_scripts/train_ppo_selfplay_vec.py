@@ -17,6 +17,7 @@ from stable_baselines.common.policies import MlpPolicy
 from stable_baselines import logger
 from stable_baselines.common.callbacks import EvalCallback
 from stable_baselines.common.cmd_util import make_vec_env
+from stable_baselines.common.vec_env import SubprocVecEnv
 
 from shutil import copyfile # keep track of generations
 
@@ -102,7 +103,7 @@ def train():
 
   env = SlimeVolleySelfPlayEnv(args)
   #env.seed(SEED)
-  vec_env = make_vec_env(SlimeVolleySelfPlayEnv, n_envs=args.num_env, seed=0, env_kwargs={'args': args})
+  vec_env = make_vec_env(SlimeVolleySelfPlayEnv, n_envs=args.num_env, seed=0, env_kwargs={'args': args}, vec_env_cls=SubprocVecEnv)
 
   # take mujoco hyperparams (but doubled timesteps_per_actorbatch to cover more steps.)
   model = PPO2(MlpPolicy, vec_env, n_steps=4096, cliprange=0.2, ent_coef=0.0, noptepochs=10,
