@@ -103,6 +103,7 @@ def train():
 
   env = SlimeVolleySelfPlayEnv(args)
   #env.seed(SEED)
+  #vec_env = make_vec_env(SlimeVolleySelfPlayEnv, n_envs=args.num_env, seed=0, env_kwargs={'args': args})
   vec_env = make_vec_env(SlimeVolleySelfPlayEnv, n_envs=args.num_env, seed=0, env_kwargs={'args': args}, vec_env_cls=SubprocVecEnv)
 
   # take mujoco hyperparams (but doubled timesteps_per_actorbatch to cover more steps.)
@@ -118,7 +119,7 @@ def train():
     n_eval_episodes=EVAL_EPISODES,
     deterministic=False)
 
-  model.learn(total_timesteps=NUM_TIMESTEPS, callback=eval_callback)
+  model.learn(total_timesteps=NUM_TIMESTEPS, callback=eval_callback, opponent_mode=args.opponent_mode)
 
   model.save(os.path.join(agrs.log_dir, "final_model")) # probably never get to this point.
 

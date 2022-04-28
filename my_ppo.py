@@ -4,6 +4,7 @@ import gym
 import numpy as np
 import tensorflow as tf
 import os
+from shutil import copyfile # keep track of generations
 
 from stable_baselines import logger
 from stable_baselines.common import explained_variance, ActorCriticRLModel, tf_util, SetVerbosity, TensorboardWriter
@@ -301,7 +302,7 @@ class PPO2(ActorCriticRLModel):
         return policy_loss, value_loss, policy_entropy, approxkl, clipfrac
 
     def learn(self, total_timesteps, callback=None, log_interval=1, tb_log_name="PPO2",
-              reset_num_timesteps=True):
+              reset_num_timesteps=True, **kwargs):
         # Transform to callable if needed
         self.learning_rate = get_schedule_fn(self.learning_rate)
         self.cliprange = get_schedule_fn(self.cliprange)
@@ -332,7 +333,7 @@ class PPO2(ActorCriticRLModel):
                 cliprange_now = self.cliprange(frac)
                 cliprange_vf_now = cliprange_vf(frac)
 
-                # reset the environments before each rollout
+                # reset the environments before each rollout so that we can change opponent for each update
                 self.env.reset()
 
                 callback.on_rollout_start()
@@ -344,28 +345,6 @@ class PPO2(ActorCriticRLModel):
                 print (opponent_actions.shape)
 
                 callback.on_rollout_end()
-                # TODO: move these into callback.on_rollout_end()
-                # update opponent RD after each update
-                ratio_threshold = 0.2
-                print (self.env.envs[0].env.best_model)
-                current_opponent = self.env.envs[0].env.best_model
-                action_prob = current_opponent.action_probability(obs, actions=opponent_actions)
-                print (action_prob.shape)
-                model_path = callback.best_model_save_path
-                model_list = [f for f in os.listdir(model_path) if f.startswith("episode")]
-                model_list.sort()
-                candidate_opponent = []
-                for model_name in model_list:
-                    new_opponent = PPO2.load('/'.join([model_path, model_name]))
-                    new_action_prob = new_opponent.action_probability(obs, actions=opponent_actions)
-                    ratio_divergence = (np.abs(new_action_prob / action_prob - 1.)).mean()
-                    if ratio_divergence <= ratio_threshold:
-                        candidate_opponent.append(new_opponent)
-                if len(candidate_opponent) > 0:
-                    idx = np.random.choice(len(candidate_opponent), 1)[0]
-                    next_opponent = candidate_opponent[idx]
-                    next_opponent.save(os.path.join(model_path, "opponent.zip"))
-
 
                 # Early stopping due to the callback
                 if not self.runner.continue_training:
@@ -409,6 +388,7 @@ class PPO2(ActorCriticRLModel):
                 loss_vals = np.mean(mb_loss_vals, axis=0)
                 t_now = time.time()
                 fps = int(self.n_batch / (t_now - t_start))
+                print ('fps', fps)
 
                 if writer is not None:
                     total_episode_reward_logger(self.episode_reward,
@@ -432,7 +412,37 @@ class PPO2(ActorCriticRLModel):
                     logger.dumpkvs()
 
                 # save the current agent into the opponent pool after each update
+                model_path = callback.best_model_save_path
                 self.save(os.path.join(model_path, "episode_"+str(update).zfill(8)+".zip"))
+
+                if kwargs['opponent_mode'] == 'our':
+                    # update opponent RD after each update
+                    ratio_threshold = 0.2
+                    #print (self.env.envs[0].env.best_model)
+                    #current_opponent = self.env.envs[0].env.best_model
+                    current_opponent = PPO2.load(model_path + '/opponent.zip')
+                    action_prob = current_opponent.action_probability(obs, actions=opponent_actions)
+                    model_list = [f for f in os.listdir(model_path) if f.startswith("episode")]
+                    model_list.sort()
+                    candidate_opponent = []
+                    for model_name in model_list:
+                        new_opponent = PPO2.load('/'.join([model_path, model_name]))
+                        new_action_prob = new_opponent.action_probability(obs, actions=opponent_actions)
+                        ratio_divergence = (np.abs(new_action_prob / action_prob - 1.)).mean()
+                        print (ratio_divergence)
+                        if ratio_divergence <= ratio_threshold:
+                            candidate_opponent.append(new_opponent)
+                    if len(candidate_opponent) > 0:
+                        idx = np.random.choice(len(candidate_opponent), 1)[0]
+                        next_opponent = candidate_opponent[idx]
+                        next_opponent.save(os.path.join(model_path, "opponent.zip"))
+                elif kwargs['opponent_mode'] == 'latest':
+                    self.save(os.path.join(model_path, "opponent.zip"))
+                elif kwargs['opponent_mode'] == 'random':
+                    model_list = [f for f in os.listdir(model_path) if f.startswith("episode")]
+                    idx = np.random.choice(len(model_list), 1)[0]
+                    copyfile(model_path + '/' + model_list[idx], model_path + '/opponent.zip')
+
 
             callback.on_training_end()
             return self
