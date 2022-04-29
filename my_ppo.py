@@ -424,18 +424,26 @@ class PPO2(ActorCriticRLModel):
                     action_prob = current_opponent.action_probability(obs, actions=opponent_actions)
                     model_list = [f for f in os.listdir(model_path) if f.startswith("episode")]
                     model_list.sort()
-                    candidate_opponent = []
+                    #candidate_opponent = []
+                    RD_all = []
                     for model_name in model_list:
                         new_opponent = PPO2.load('/'.join([model_path, model_name]))
                         new_action_prob = new_opponent.action_probability(obs, actions=opponent_actions)
                         ratio_divergence = (np.abs(new_action_prob / action_prob - 1.)).mean()
-                        print (ratio_divergence)
-                        if ratio_divergence <= ratio_threshold:
-                            candidate_opponent.append(new_opponent)
+                        RD_all.append(ratio_divergence)
+                        #print (ratio_divergence)
+                        #if ratio_divergence <= ratio_threshold:
+                        #    candidate_opponent.append(new_opponent)
+                    '''
                     if len(candidate_opponent) > 0:
                         idx = np.random.choice(len(candidate_opponent), 1)[0]
                         next_opponent = candidate_opponent[idx]
                         next_opponent.save(os.path.join(model_path, "opponent.zip"))
+                    '''
+                    RD_all = np.array(RD_all)
+                    RD_all = RD_all / RD_all.sum()
+                    idx = np.random.choice(len(RD_all), 1, p=RD_all)[0]
+                    copyfile(model_path + '/' + model_list[idx], model_path + '/opponent.zip')
                 elif kwargs['opponent_mode'] == 'latest':
                     self.save(os.path.join(model_path, "opponent.zip"))
                 elif kwargs['opponent_mode'] == 'random':
