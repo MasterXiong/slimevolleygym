@@ -1,7 +1,10 @@
 """
 evaluate the checkpoint models during PPO training process against the build-in opponent
 
-python eval_ppo_against_built_in.py --model_path latest_opponent
+python eval_ppo_against_built_in.py --model_path logs_latest_100M --label latest_new --interval 50 --num_episode 50
+python eval_ppo_against_built_in.py --model_path logs_latest_origin_100M --label latest_origin --interval 50 --num_episode 50
+python eval_ppo_against_built_in.py --model_path logs_random_100M --label random_new --interval 50 --num_episode 50
+python eval_ppo_against_built_in.py --model_path logs_random_origin_100M --label random_origin --interval 50 --num_episode 50
 
 Evaluate PPO1 policy (MLP input_dim x 64 x 64 x output_dim policy) against built-in AI
 
@@ -38,6 +41,8 @@ if __name__=="__main__":
                         type=str, default="zoo/ppo/best_model.zip")
   parser.add_argument('--render', action='store_true', help='render to screen?', default=False)
   parser.add_argument('--num_episode', type=int, default=10)
+  parser.add_argument('--label', type=str, default='')
+  parser.add_argument('--interval', type=int, default=10)
 
   args = parser.parse_args()
   render_mode = args.render
@@ -45,8 +50,9 @@ if __name__=="__main__":
 
   env = gym.make("SlimeVolley-v0")
 
-  model_list = [f for f in os.listdir(model_path) if f.startswith("history")]
+  model_list = [f for f in os.listdir(model_path) if f.startswith("episode")]
   model_list.sort()
+  model_list = model_list[::args.interval]
 
   evaluation_curve = []
   for model_name in model_list:
@@ -59,10 +65,12 @@ if __name__=="__main__":
     print (episode_rewards.mean())
     evaluation_curve.append([episode_rewards.mean(), episode_rewards.std()])
 
-  with open('/'.join([model_path, 'eval_against_built_in.pkl']), 'wb') as f:
+  with open('eval_%s_against_built_in.pkl' %(args.label), 'wb') as f:
     pickle.dump(evaluation_curve, f)
 
+  '''
   plt.figure()
   plt.errorbar(np.arange(len(evaluation_curve)), [x[0] for x in evaluation_curve], yerr=[x[1] for x in evaluation_curve])
   plt.savefig(model_path + '/eval_against_built_in.png')
   plt.close()
+  '''

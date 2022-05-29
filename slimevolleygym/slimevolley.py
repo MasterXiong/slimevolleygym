@@ -777,7 +777,7 @@ class SlimeVolleyEnv(gym.Env):
       otherAction = self.otherAction
       
     if otherAction is None: # override baseline policy
-      obs = self.game.agent_left.getObservation()
+      opponent_obs = obs = self.game.agent_left.getObservation()
       otherAction = self.policy.predict(obs)
 
     if self.atari_mode:
@@ -808,6 +808,7 @@ class SlimeVolleyEnv(gym.Env):
       'ale.lives': self.game.agent_right.lives(),
       'ale.otherLives': self.game.agent_left.lives(),
       'otherObs': otherObs,
+      'other_obs_before': opponent_obs, 
       'state': self.game.agent_right.getObservation(),
       'otherState': self.game.agent_left.getObservation(),
       'opponent_action': otherAction

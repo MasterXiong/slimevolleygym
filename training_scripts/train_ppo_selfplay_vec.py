@@ -2,7 +2,7 @@
 
 # Simple self-play PPO trainer
 '''
-python training_scripts/train_ppo_selfplay_vec.py --opponent_mode latest --num_env 8 --log_dir opponent_latest_vec_8
+python training_scripts/train_ppo_selfplay_vec.py --opponent_mode ours --num_env 8 --log_dir logs_ours_origin_100M --use_opponent_data False
 '''
 
 import argparse
@@ -23,7 +23,7 @@ from shutil import copyfile # keep track of generations
 
 # Settings
 SEED = 17
-NUM_TIMESTEPS = int(1e9)
+NUM_TIMESTEPS = int(1e8)
 EVAL_FREQ = int(1e4)
 EVAL_EPISODES = int(10)
 BEST_THRESHOLD = 0.5 # must achieve a mean score above this to replace prev best self
@@ -96,6 +96,7 @@ def train():
   parser.add_argument('--opponent_mode', type=str)
   parser.add_argument('--log_dir', type=str)
   parser.add_argument('--num_env', type=int, default=32)
+  parser.add_argument('--use_opponent_data', type=bool, default=False)
   args = parser.parse_args()
 
   # train selfplay agent
@@ -119,7 +120,8 @@ def train():
     n_eval_episodes=EVAL_EPISODES,
     deterministic=False)
 
-  model.learn(total_timesteps=NUM_TIMESTEPS, callback=eval_callback, opponent_mode=args.opponent_mode)
+  model.learn(total_timesteps=NUM_TIMESTEPS, callback=None, \
+    opponent_mode=args.opponent_mode, use_opponent_data=args.use_opponent_data)
 
   model.save(os.path.join(agrs.log_dir, "final_model")) # probably never get to this point.
 

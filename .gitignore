@@ -2,4 +2,5 @@
 *.pkl
 opponent*/
 *opponent/
+logs*/
 *pycache*

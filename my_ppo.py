@@ -340,11 +340,18 @@ class PPO2(ActorCriticRLModel):
                 # true_reward is the reward without discount
                 rollout = self.runner.run(callback)
                 # Unpack
-                obs, returns, masks, actions, values, neglogpacs, states, ep_infos, true_reward, opponent_actions = rollout
-                print (obs.shape, actions.shape, returns.shape)
-                print (opponent_actions.shape)
+                obs, returns, masks, actions, values, neglogpacs, states, ep_infos, true_reward, \
+                    opponent_obs, opponent_returns, opponent_actions, opponent_values, opponent_neglogpacs = rollout
 
                 callback.on_rollout_end()
+
+                if kwargs['use_opponent_data']:
+                    obs = np.concatenate([obs, opponent_obs], axis=0)
+                    returns = np.concatenate([returns, opponent_returns], axis=0)
+                    masks = np.concatenate([masks, masks], axis=0)
+                    actions = np.concatenate([actions, opponent_actions], axis=0)
+                    values = np.concatenate([values, opponent_values], axis=0)
+                    neglogpacs = np.concatenate([neglogpacs, opponent_neglogpacs.ravel()], axis=0)
 
                 # Early stopping due to the callback
                 if not self.runner.continue_training:
@@ -353,7 +360,10 @@ class PPO2(ActorCriticRLModel):
                 self.ep_info_buf.extend(ep_infos)
                 mb_loss_vals = []
                 if states is None:  # nonrecurrent version
-                    update_fac = self.n_batch // self.nminibatches // self.noptepochs + 1
+                    if kwargs['use_opponent_data']:
+                        update_fac = 2 * self.n_batch // self.nminibatches // self.noptepochs + 1
+                    else:
+                        update_fac = self.n_batch // self.nminibatches // self.noptepochs + 1
                     inds = np.arange(self.n_batch)
                     for epoch_num in range(self.noptepochs):
                         np.random.shuffle(inds)
@@ -415,35 +425,30 @@ class PPO2(ActorCriticRLModel):
                 model_path = callback.best_model_save_path
                 self.save(os.path.join(model_path, "episode_"+str(update).zfill(8)+".zip"))
 
-                if kwargs['opponent_mode'] == 'our':
+                if kwargs['opponent_mode'] == 'ours':
                     # update opponent RD after each update
-                    ratio_threshold = 0.2
-                    #print (self.env.envs[0].env.best_model)
-                    #current_opponent = self.env.envs[0].env.best_model
                     current_opponent = PPO2.load(model_path + '/opponent.zip')
-                    action_prob = current_opponent.action_probability(obs, actions=opponent_actions)
+                    action_prob = current_opponent.action_probability(opponent_obs, actions=opponent_actions)
                     model_list = [f for f in os.listdir(model_path) if f.startswith("episode")]
                     model_list.sort()
-                    #candidate_opponent = []
+
+                    if len(model_list) > 20:
+                        subsample_idx = np.random.choice(len(model_list), 30, replace=False)
+                        subsample_idx = np.sort(subsample_idx)
+                    else:
+                        subsample_idx = np.arange(len(model_list))
+
                     RD_all = []
-                    for model_name in model_list:
-                        new_opponent = PPO2.load('/'.join([model_path, model_name]))
-                        new_action_prob = new_opponent.action_probability(obs, actions=opponent_actions)
+                    for i in subsample_idx:
+                        new_opponent = PPO2.load('/'.join([model_path, model_list[i]]))
+                        new_action_prob = new_opponent.action_probability(opponent_obs, actions=opponent_actions)
                         ratio_divergence = (np.abs(new_action_prob / action_prob - 1.)).mean()
                         RD_all.append(ratio_divergence)
-                        #print (ratio_divergence)
-                        #if ratio_divergence <= ratio_threshold:
-                        #    candidate_opponent.append(new_opponent)
-                    '''
-                    if len(candidate_opponent) > 0:
-                        idx = np.random.choice(len(candidate_opponent), 1)[0]
-                        next_opponent = candidate_opponent[idx]
-                        next_opponent.save(os.path.join(model_path, "opponent.zip"))
-                    '''
+
                     RD_all = np.array(RD_all)
                     RD_all = RD_all / RD_all.sum()
                     idx = np.random.choice(len(RD_all), 1, p=RD_all)[0]
-                    copyfile(model_path + '/' + model_list[idx], model_path + '/opponent.zip')
+                    copyfile(model_path + '/' + model_list[subsample_idx[idx]], model_path + '/opponent.zip')
                 elif kwargs['opponent_mode'] == 'latest':
                     self.save(os.path.join(model_path, "opponent.zip"))
                 elif kwargs['opponent_mode'] == 'random':
@@ -517,7 +522,7 @@ class Runner(AbstractEnvRunner):
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_neglogpacs = [], [], [], [], [], []
         mb_states = self.states
         # record opponent actions so that we can compute RD
-        opponent_actions = []
+        opponent_obs, opponent_actions, opponent_values, opponent_neglogpacs = [], [], [], []
         ep_infos = []
         for _ in range(self.n_steps):
             actions, values, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
@@ -530,12 +535,18 @@ class Runner(AbstractEnvRunner):
             # Clip the actions to avoid out of bound error
             if isinstance(self.env.action_space, gym.spaces.Box):
                 clipped_actions = np.clip(actions, self.env.action_space.low, self.env.action_space.high)
-            self.obs[:], rewards, self.dones, infos = self.env.step(clipped_actions)
+            self.obs[:], rewards, dones_new, infos = self.env.step(clipped_actions)
             #print (len(infos))
             #print (infos[0])
-            opponent_actions.append([x['opponent_action'] for x in infos])
+            opponent_ob = [x['other_obs_before'] for x in infos]
+            opponent_action = [x['opponent_action'] for x in infos]
+            opponent_obs.append(opponent_ob)
+            opponent_actions.append(opponent_action)
+            opponent_neglogpacs.append(-self.model.action_probability(opponent_ob, actions=opponent_action, logp=True))
+            opponent_values.append(self.model.value(opponent_ob, self.states, self.dones))
 
             self.model.num_timesteps += self.n_envs
+            self.dones = dones_new
 
             if self.callback is not None:
                 # Abort training early
@@ -558,27 +569,39 @@ class Runner(AbstractEnvRunner):
         mb_dones = np.asarray(mb_dones, dtype=np.bool)
         last_values = self.model.value(self.obs, self.states, self.dones)
         # convert opponent actions into an array
+        opponent_obs = np.asarray(opponent_obs, dtype=np.float32)
         opponent_actions = np.asarray(opponent_actions, dtype=np.float32)
+        opponent_neglogpacs = np.asarray(opponent_neglogpacs, dtype=np.float32)
+        opponent_values = np.asarray(opponent_values, dtype=np.float32)
+        opponent_last_values = self.model.value(opponent_ob, self.states, self.dones)
+        
+        true_reward, mb_returns = self.compute_adv(mb_rewards, mb_dones, mb_values, last_values)
+        _, opponent_returns = self.compute_adv(-mb_rewards, mb_dones, opponent_values, opponent_last_values)
+
+        mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs, true_reward = \
+            map(swap_and_flatten, (mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs, true_reward))
+        opponent_obs, opponent_returns, opponent_actions, opponent_values, opponent_neglogpacs = \
+            map(swap_and_flatten, (opponent_obs, opponent_returns, opponent_actions, opponent_values, opponent_neglogpacs))
+    
+        return mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs, mb_states, ep_infos, true_reward, \
+            opponent_obs, opponent_returns, opponent_actions, opponent_values, opponent_neglogpacs
+    
+    def compute_adv(self, rewards, dones, values, last_values):
         # discount/bootstrap off value fn
-        mb_advs = np.zeros_like(mb_rewards)
-        true_reward = np.copy(mb_rewards)
+        mb_advs = np.zeros_like(rewards)
+        true_reward = np.copy(rewards)
         last_gae_lam = 0
         for step in reversed(range(self.n_steps)):
             if step == self.n_steps - 1:
                 nextnonterminal = 1.0 - self.dones
                 nextvalues = last_values
             else:
-                nextnonterminal = 1.0 - mb_dones[step + 1]
-                nextvalues = mb_values[step + 1]
-            delta = mb_rewards[step] + self.gamma * nextvalues * nextnonterminal - mb_values[step]
+                nextnonterminal = 1.0 - dones[step + 1]
+                nextvalues = values[step + 1]
+            delta = rewards[step] + self.gamma * nextvalues * nextnonterminal - values[step]
             mb_advs[step] = last_gae_lam = delta + self.gamma * self.lam * nextnonterminal * last_gae_lam
-        mb_returns = mb_advs + mb_values
-
-        mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs, true_reward, opponent_actions = \
-            map(swap_and_flatten, (mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs, true_reward, opponent_actions))
-
-        return mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs, mb_states, ep_infos, true_reward, opponent_actions
-
+        mb_returns = mb_advs + values
+        return true_reward, mb_returns
 
 # obs, returns, masks, actions, values, neglogpacs, states = runner.run()
 def swap_and_flatten(arr):
