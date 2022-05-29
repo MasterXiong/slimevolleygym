@@ -1,10 +1,10 @@
 """
 evaluate the checkpoint models during PPO training process against the build-in opponent
 
-python eval_ppo_against_built_in.py --model_path logs_latest_100M --label latest_new --interval 50 --num_episode 50
-python eval_ppo_against_built_in.py --model_path logs_latest_origin_100M --label latest_origin --interval 50 --num_episode 50
-python eval_ppo_against_built_in.py --model_path logs_random_100M --label random_new --interval 50 --num_episode 50
-python eval_ppo_against_built_in.py --model_path logs_random_origin_100M --label random_origin --interval 50 --num_episode 50
+python eval_ppo_against_built_in.py --model_path logs_latest_100M --label latest_new --interval 50 --num_episode 20 --opponent ppo
+python eval_ppo_against_built_in.py --model_path logs_latest_origin_100M --label latest_origin --interval 50 --num_episode 20 --opponent ppo
+python eval_ppo_against_built_in.py --model_path logs_random_100M --label random_new --interval 50 --num_episode 20 --opponent ppo
+python eval_ppo_against_built_in.py --model_path logs_random_origin_100M --label random_origin --interval 50 --num_episode 20 --opponent ppo
 
 Evaluate PPO1 policy (MLP input_dim x 64 x 64 x output_dim policy) against built-in AI
 
@@ -33,6 +33,13 @@ matplotlib.use('agg')
 import matplotlib.pyplot as plt
 
 
+class PPOPolicy:
+  def __init__(self, path):
+    self.model = PPO1.load(path)
+  def predict(self, obs):
+    action, state = self.model.predict(obs, deterministic=True)
+    return action
+
 
 if __name__=="__main__":
 
@@ -43,12 +50,16 @@ if __name__=="__main__":
   parser.add_argument('--num_episode', type=int, default=10)
   parser.add_argument('--label', type=str, default='')
   parser.add_argument('--interval', type=int, default=10)
+  parser.add_argument('--opponent', type=str, default='built_in')
 
   args = parser.parse_args()
   render_mode = args.render
   model_path = args.model_path
 
   env = gym.make("SlimeVolley-v0")
+
+  if args.opponent == 'ppo':
+    env.policy = PPOPolicy('zoo/ppo/best_model.zip')
 
   model_list = [f for f in os.listdir(model_path) if f.startswith("episode")]
   model_list.sort()
@@ -65,7 +76,7 @@ if __name__=="__main__":
     print (episode_rewards.mean())
     evaluation_curve.append([episode_rewards.mean(), episode_rewards.std()])
 
-  with open('eval_%s_against_built_in.pkl' %(args.label), 'wb') as f:
+  with open('eval_%s_against_%s.pkl' %(args.label, args.opponent), 'wb') as f:
     pickle.dump(evaluation_curve, f)
 
   '''

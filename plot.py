@@ -38,11 +38,12 @@ plt.close()
 '''
 
 labels = ['random_origin', 'random_new', 'latest_origin', 'latest_new']
+opponent = 'ppo'
 plt.figure()
 for label in labels:
-	with open('eval_%s_against_built_in.pkl' %(label), 'rb') as f:
+	with open('eval_%s_against_%s.pkl' %(label, opponent), 'rb') as f:
 		evaluation_curve = pickle.load(f)
 	plt.plot([x[0] for x in evaluation_curve], label=label)
 plt.legend()
-plt.savefig('eval_against_built_in.png')
+plt.savefig('eval_against_%s.png' %(opponent))
 plt.close()

@@ -302,7 +302,7 @@ class PPO2(ActorCriticRLModel):
         return policy_loss, value_loss, policy_entropy, approxkl, clipfrac
 
     def learn(self, total_timesteps, callback=None, log_interval=1, tb_log_name="PPO2",
-              reset_num_timesteps=True, **kwargs):
+              reset_num_timesteps=True, log_dir='', **kwargs):
         # Transform to callable if needed
         self.learning_rate = get_schedule_fn(self.learning_rate)
         self.cliprange = get_schedule_fn(self.cliprange)
@@ -422,7 +422,7 @@ class PPO2(ActorCriticRLModel):
                     logger.dumpkvs()
 
                 # save the current agent into the opponent pool after each update
-                model_path = callback.best_model_save_path
+                model_path = log_dir
                 self.save(os.path.join(model_path, "episode_"+str(update).zfill(8)+".zip"))
 
                 if kwargs['opponent_mode'] == 'ours':
@@ -432,8 +432,9 @@ class PPO2(ActorCriticRLModel):
                     model_list = [f for f in os.listdir(model_path) if f.startswith("episode")]
                     model_list.sort()
 
-                    if len(model_list) > 20:
-                        subsample_idx = np.random.choice(len(model_list), 30, replace=False)
+                    subsample_num = 20
+                    if len(model_list) > subsample_num:
+                        subsample_idx = np.random.choice(len(model_list), subsample_num, replace=False)
                         subsample_idx = np.sort(subsample_idx)
                     else:
                         subsample_idx = np.arange(len(model_list))

@@ -121,9 +121,9 @@ def train():
     deterministic=False)
 
   model.learn(total_timesteps=NUM_TIMESTEPS, callback=None, \
-    opponent_mode=args.opponent_mode, use_opponent_data=args.use_opponent_data)
+    opponent_mode=args.opponent_mode, use_opponent_data=args.use_opponent_data, log_dir=args.log_dir)
 
-  model.save(os.path.join(agrs.log_dir, "final_model")) # probably never get to this point.
+  model.save(os.path.join(args.log_dir, "final_model")) # probably never get to this point.
 
   env.close()
 
